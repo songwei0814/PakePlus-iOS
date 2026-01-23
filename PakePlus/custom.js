@@ -1,5 +1,32 @@
 // very important, if you don't know what it is, don't touch it
 // 非常重要，不懂代码不要动，这里可以解决80%的问题，也可以生产1000+的bug
+/**
+ * @description 针对 equipmentManagement 路由的 URL 规范化
+ * 如果命中 /#/equipmentManagement，则强制改写前缀为
+ * https://service.emposat.com/child/station-control/index.html#/
+ */
+const normalizeEquipmentUrl = (rawUrl) => {
+    // 防御性检查：确保 rawUrl 是有效的字符串
+    if (!rawUrl || typeof rawUrl !== 'string') {
+        console.warn('[normalizeEquipmentUrl] 无效的 URL:', rawUrl)
+        return rawUrl || ''
+    }
+    
+    try {
+        const u = new URL(rawUrl, window.location.href)
+        const hash = u.hash || ''
+        if (hash.startsWith('#/equipmentManagement')) {
+            const normalized = 'https://service.emposat.com/child/station-control/index.html' + hash
+            console.log('[normalizeEquipmentUrl] 改写 URL:', rawUrl, '→', normalized)
+            return normalized
+        }
+        return u.toString()
+    } catch (e) {
+        // URL 解析失败，返回原始字符串
+        console.warn('[normalizeEquipmentUrl] URL 解析失败:', e)
+        return rawUrl
+    }
+}
 
 /**
  * @description 安全跳转函数，针对 WebView 和微前端 iframe 优化
@@ -13,11 +40,14 @@ function safeNavigate(url, targetWindow) {
         return
     }
     
+    // 🔥 关键：先进行 URL 规范化
+    const normalizedUrl = normalizeEquipmentUrl(url)
+    
     // 使用顶层 window（跳出 iframe）
     const win = targetWindow || window.top || window.parent || window
     const isTopWindow = win === window
     
-    console.log('[safeNavigate] 准备跳转:', url)
+    console.log('[safeNavigate] 准备跳转:', normalizedUrl)
     console.log('[safeNavigate] 使用 window:', isTopWindow ? '当前窗口' : '顶层窗口（已跳出 iframe）')
     
     // 使用异步方式确保在 WebView 中执行
@@ -26,7 +56,7 @@ function safeNavigate(url, targetWindow) {
         
         // 策略1: 使用 location.replace（推荐，不保留历史）
         try {
-            win.location.replace(url)
+            win.location.replace(normalizedUrl)
             console.log('[safeNavigate] ✓ 使用 location.replace 跳转成功')
             return
         } catch (e) {
@@ -35,7 +65,7 @@ function safeNavigate(url, targetWindow) {
         
         // 策略2: 使用 location.assign
         try {
-            win.location.assign(url)
+            win.location.assign(normalizedUrl)
             console.log('[safeNavigate] ✓ 使用 location.assign 跳转成功')
             return
         } catch (e) {
@@ -44,7 +74,7 @@ function safeNavigate(url, targetWindow) {
         
         // 策略3: 直接设置 location.href
         try {
-            win.location.href = url
+            win.location.href = normalizedUrl
             console.log('[safeNavigate] ✓ 使用 location.href 跳转成功')
             return
         } catch (e) {
@@ -55,7 +85,7 @@ function safeNavigate(url, targetWindow) {
         try {
             const targetDoc = win.document || document
             const anchor = targetDoc.createElement('a')
-            anchor.href = url
+            anchor.href = normalizedUrl
             anchor.style.display = 'none'
             targetDoc.body.appendChild(anchor)
             anchor.click()
@@ -106,9 +136,12 @@ function overrideWindowOpen(targetWindow, targetDocument, label) {
                 return null
             }
             
+            // 🔥 关键：跳转前先进行 URL 规范化
+            const normalizedUrl = normalizeEquipmentUrl(String(url))
+            
             // 跳转到顶层窗口
-            safeNavigate(String(url), targetWindow.top || targetWindow.parent || targetWindow)
-            return targetWindow
+            safeNavigate(normalizedUrl, targetWindow.top || targetWindow.parent || targetWindow)
+            return null
         }
         
         console.log(`[overrideWindowOpen] ✓ 已重写 ${label} 的 window.open`)
@@ -128,7 +161,10 @@ function overrideWindowOpen(targetWindow, targetDocument, label) {
                     e.preventDefault()
                     e.stopPropagation() // 阻止事件冒泡
                     console.log(`[hookClick ${label}] 拦截 iframe 内链接点击:`, origin.href)
-                    safeNavigate(origin.href, targetWindow.top || targetWindow.parent || targetWindow)
+                    
+                    // 🔥 关键：跳转前先进行 URL 规范化
+                    const normalizedUrl = normalizeEquipmentUrl(origin.href)
+                    safeNavigate(normalizedUrl, targetWindow.top || targetWindow.parent || targetWindow)
                 }
             }, { capture: true })
             
@@ -320,7 +356,7 @@ function hookAllIframes() {
 }
 
 /**
- * @description 处理链接点击事件
+ * @description 处理主应用的链接点击事件
  * @param {Event} e 点击事件对象
  */
 const hookClick = (e) => {
@@ -328,17 +364,20 @@ const hookClick = (e) => {
     const isBaseTargetBlank = document.querySelector(
         'head base[target="_blank"]'
     )
-    console.log('[hookClick] origin:', origin, 'isBaseTargetBlank:', isBaseTargetBlank)
+    console.log('[hookClick main] origin:', origin, 'isBaseTargetBlank:', isBaseTargetBlank)
     
     if (
         (origin && origin.href && origin.target === '_blank') ||
         (origin && origin.href && isBaseTargetBlank)
     ) {
         e.preventDefault()
-        console.log('[hookClick] 拦截新标签页打开，目标:', origin.href)
-        safeNavigate(origin.href)
+        console.log('[hookClick main] 拦截新标签页打开，目标:', origin.href)
+        
+        // 🔥 关键：跳转前先进行 URL 规范化
+        const normalizedUrl = normalizeEquipmentUrl(origin.href)
+        safeNavigate(normalizedUrl)
     } else {
-        console.log('[hookClick] 不处理此点击')
+        console.log('[hookClick main] 不处理此点击')
     }
 }
 
@@ -364,6 +403,7 @@ if (document.readyState === 'loading') {
 }
 
 console.log('[初始化] ✓ 微前端跳转拦截已启动')
+console.log('[初始化] ✓ equipmentManagement 路由规范化已启用')
 
 // 可选：提供清理函数（用于调试或卸载）
 window.__vcCleanup = () => {
